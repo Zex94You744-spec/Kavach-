@@ -1,0 +1,7 @@
+.kavach/\nkavach\n*.enc
+.kavach/
+kavach
+kavach.bak
+*.enc
+*.pem
+private.pem
