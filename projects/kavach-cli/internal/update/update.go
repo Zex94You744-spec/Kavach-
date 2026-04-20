@@ -13,14 +13,17 @@ import (
 	"path/filepath"
 	"runtime"
 	"time"
+
+	"github.com/zex94you744-spec/kavach-cli/internal/ux"
 )
 
 const (
-	// 🔒 Replace with your actual update server URL
-	updateServerURL = "http://localhost:8080"
+	// 🔒 Update server URL (change to your production HTTPS URL)
+        updateServerURL = "https://raw.githubusercontent.com/Zex94You744-spec/kavach-updates/main"
 	// 🔑 Embed your Ed25519 PUBLIC KEY here (64 hex chars)
 	embeddedPubKeyHex = "31236d5cc1248ff5d354071e8954b3900eb17b7cb840ba21aa8a18d05063a8cd"
-	currentVersion    = "v0.1.0"
+	// 📦 Current CLI version
+	currentVersion = "v0.3.0"
 )
 
 type UpdateInfo struct {
@@ -58,16 +61,17 @@ func CheckUpdate() (bool, UpdateInfo, error) {
 
 // ApplyUpdate downloads, verifies, and atomically replaces binary
 func ApplyUpdate() error {
+	ux.Verbose("Checking for updates...")
 	isNew, info, err := CheckUpdate()
 	if err != nil {
 		return fmt.Errorf("update check failed: %w", err)
 	}
 	if !isNew {
-		fmt.Println("✅ Already on latest version:", currentVersion)
+		ux.Success("Already on latest version: " + currentVersion)
 		return nil
 	}
 
-	fmt.Printf("🔄 New version available: %s (current: %s)\n", info.Version, currentVersion)
+	ux.Info(fmt.Sprintf("New version available: %s (current: %s)", info.Version, currentVersion))
 
 	execPath, err := os.Executable()
 	if err != nil {
@@ -78,7 +82,7 @@ func ApplyUpdate() error {
 	tmpSig := tmpBin + ".sig"
 	backupPath := execPath + ".bak"
 
-	// 1. Download binary & signature
+	ux.Verbose("Downloading binary & signature...")
 	if err := downloadFile(info.BinaryURL, tmpBin); err != nil {
 		return fmt.Errorf("binary download failed: %w", err)
 	}
@@ -87,7 +91,7 @@ func ApplyUpdate() error {
 		return fmt.Errorf("signature download failed: %w", err)
 	}
 
-	// 2. Verify SHA-256
+	ux.Verbose("Verifying SHA-256 integrity...")
 	hash, err := calculateFileHash(tmpBin)
 	if err != nil {
 		cleanup(tmpBin, tmpSig)
@@ -98,31 +102,32 @@ func ApplyUpdate() error {
 		return fmt.Errorf("binary hash mismatch (expected %s, got %s)", info.SHA256, hash)
 	}
 
-	// 3. Verify Ed25519 Signature
+	ux.Verbose("Verifying Ed25519 signature...")
 	pubKey, _ := hex.DecodeString(embeddedPubKeyHex)
 	binData, _ := os.ReadFile(tmpBin)
 	sigData, _ := os.ReadFile(tmpSig)
 	if !ed25519.Verify(pubKey, binData, sigData) {
 		cleanup(tmpBin, tmpSig)
-		return fmt.Errorf("🚨 Signature verification failed. Update rejected.")
+		ux.Error("🚨 Signature verification failed. Update rejected.")
+		return fmt.Errorf("signature verification failed")
 	}
 
-	// 4. Atomic Swap
+	ux.Verbose("Applying atomic swap...")
 	if err := os.Rename(execPath, backupPath); err != nil {
 		return fmt.Errorf("backup failed: %w", err)
 	}
 	if err := os.Rename(tmpBin, execPath); err != nil {
-		// Rollback
+		ux.Warning("Update failed, rolling back safely...")
 		os.Rename(backupPath, execPath)
 		cleanup(tmpBin, tmpSig)
 		return fmt.Errorf("update failed, rolled back safely: %w", err)
 	}
 
 	os.Chmod(execPath, 0755)
-	cleanup(tmpSig, "") // remove sig file
+	cleanup(tmpSig, "")
 
-	fmt.Println("✅ Update applied successfully. Restart to use new version.")
-	fmt.Println("📦 Backup saved at:", backupPath)
+	ux.Success("Update applied successfully. Restart to use new version.")
+	ux.Info("Backup saved at: " + backupPath)
 	return nil
 }
 

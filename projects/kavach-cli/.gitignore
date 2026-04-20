@@ -4,3 +4,13 @@ kavach.bak
 *.enc
 *.pem
 private.pem
+# Test files
+*.txt
+!README.md
+!SECURITY.md
+
+# Debug builds
+kavach_debug
+
+# Local backups
+*.bak

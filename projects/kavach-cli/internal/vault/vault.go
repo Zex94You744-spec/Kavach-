@@ -1,4 +1,3 @@
-// internal/vault/vault.go
 package vault
 
 import (
@@ -15,6 +14,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/zex94you744-spec/kavach-cli/internal/crypto"
+	"github.com/zex94you744-spec/kavach-cli/internal/ux"
 )
 
 const (
@@ -22,17 +22,15 @@ const (
 	manifestFile = ".kavach/manifest.json"
 )
 
-// FileRecord stores metadata for integrity verification
 type FileRecord struct {
 	OriginalName string `json:"original"`
 	SHA256       string `json:"sha256"`
 	AddedAt      string `json:"added_at"`
 }
 
-// Manifest holds all vault file records
 type Manifest struct {
 	Version string                `json:"version"`
-	Files   map[string]FileRecord `json:"files"` // key: encrypted filename
+	Files   map[string]FileRecord `json:"files"`
 }
 
 func secureWipe(buf []byte) {
@@ -48,6 +46,7 @@ func calculateHash(data []byte) string {
 }
 
 func loadManifest() (*Manifest, error) {
+	ux.Verbose("Loading manifest: " + manifestFile)
 	data, err := os.ReadFile(manifestFile)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -64,38 +63,40 @@ func saveManifest(m *Manifest) error {
 	if err != nil {
 		return err
 	}
+	ux.Verbose("Saving updated manifest")
 	return os.WriteFile(manifestFile, data, 0600)
 }
 
 func Init() {
 	if _, err := os.Stat(vaultDir); err == nil {
-		fmt.Println("⚠️  Vault already initialized.")
+		ux.Warning("Vault already initialized. Skipping.")
 		return
 	}
 	if err := os.MkdirAll(vaultDir, 0700); err != nil {
-		fmt.Printf("❌ Failed to create vault: %v\n", err)
+		ux.Error(fmt.Sprintf("Failed to create vault: %v", err))
 		return
 	}
-	fmt.Println("✅ Vault initialized at .kavach/")
-	fmt.Println("🔑 Keep your passphrase safe. Loss = permanent data lock.")
-	fmt.Println("💡 Tip: Use 12+ chars, mix case/numbers/symbols.")
+	ux.Success("Vault initialized at .kavach/")
+	ux.Tip("Keep your passphrase safe. Loss = permanent data lock.")
 }
 
 func readPassphrase() []byte {
+	ux.Verbose("Prompting for passphrase (hidden input)")
 	fmt.Print("Enter passphrase: ")
 	bytePass, err := term.ReadPassword(int(os.Stdin.Fd()))
 	fmt.Println()
 	if err != nil {
-		fmt.Println("❌ Failed to read passphrase")
+		ux.Error("Failed to read passphrase")
 		os.Exit(1)
 	}
 	return bytePass
 }
 
 func AddFile(filePath string) {
+	ux.Verbose("Reading plaintext: " + filePath)
 	plaintext, err := os.ReadFile(filePath)
 	if err != nil {
-		fmt.Printf("❌ Read error: %v\n", err)
+		ux.Error(fmt.Sprintf("Read error: %v", err))
 		return
 	}
 	defer secureWipe(plaintext)
@@ -106,22 +107,22 @@ func AddFile(filePath string) {
 	pass := readPassphrase()
 	defer secureWipe(pass)
 
+	ux.Verbose("Encrypting with age (Scrypt + ChaCha20-Poly1305)")
 	encData, err := crypto.Encrypt(plaintext, pass)
 	if err != nil {
-		fmt.Printf("❌ Encrypt error: %v\n", err)
+		ux.Error(fmt.Sprintf("Encrypt error: %v", err))
 		return
 	}
 
-	// Save encrypted file
+	ux.Verbose("Writing encrypted file")
 	if err := os.WriteFile(filepath.Join(vaultDir, encName), encData, 0600); err != nil {
-		fmt.Printf("❌ Write error: %v\n", err)
+		ux.Error(fmt.Sprintf("Write error: %v", err))
 		return
 	}
 
-	// Update manifest
 	manifest, err := loadManifest()
 	if err != nil {
-		fmt.Printf("❌ Manifest error: %v\n", err)
+		ux.Error(fmt.Sprintf("Manifest error: %v", err))
 		return
 	}
 	manifest.Files[encName] = FileRecord{
@@ -130,103 +131,103 @@ func AddFile(filePath string) {
 		AddedAt:      time.Now().Format(time.RFC3339),
 	}
 	if err := saveManifest(manifest); err != nil {
-		fmt.Printf("❌ Failed to update manifest: %v\n", err)
+		ux.Error(fmt.Sprintf("Manifest save failed: %v", err))
 		return
 	}
 
-	fmt.Printf("✅ Encrypted & hashed: %s → %s/%s\n", filePath, vaultDir, encName)
+	ux.Success(fmt.Sprintf("Encrypted & hashed: %s → %s/%s", filePath, vaultDir, encName))
+	ux.Tip("Run 'kavach audit' anytime to verify file integrity.")
 }
 
 func PullFile(encName string) {
 	encPath := filepath.Join(vaultDir, encName)
+	ux.Verbose("Reading encrypted file: " + encPath)
 	encData, err := os.ReadFile(encPath)
 	if err != nil {
-		fmt.Printf("❌ Read error: %v\n", err)
+		ux.Error(fmt.Sprintf("Read error: %v", err))
 		return
 	}
 
 	pass := readPassphrase()
 	defer secureWipe(pass)
 
+	ux.Verbose("Decrypting in memory")
 	decData, err := crypto.Decrypt(encData, pass)
 	if err != nil {
-		fmt.Printf("❌ Decryption failed: %v\n", err)
+		ux.Error(fmt.Sprintf("Decryption failed: %v", err))
 		return
 	}
 
-	// 🔍 Integrity verification BEFORE writing to disk
 	manifest, err := loadManifest()
 	if err != nil {
-		fmt.Printf("❌ Manifest read error: %v\n", err)
+		ux.Error(fmt.Sprintf("Manifest read error: %v", err))
 		secureWipe(decData)
 		return
 	}
 
 	record, exists := manifest.Files[encName]
 	if !exists {
-		fmt.Println("⚠️  File not found in manifest. Possible tampering.")
-		secureWipe(decData)
-		return
-	}
-
-	if calculateHash(decData) != record.SHA256 {
-		fmt.Println("🚨 INTEGRITY FAILURE: File hash mismatch. Tampered or corrupted!")
+		ux.Warning("File not found in manifest. Possible external addition.")
+	} else if calculateHash(decData) != record.SHA256 {
+		ux.Error("🚨 INTEGRITY FAILURE: File hash mismatch. Tampered or corrupted!")
 		secureWipe(decData)
 		return
 	}
 
 	outName := strings.TrimSuffix(encName, ".enc")
+	ux.Verbose("Writing decrypted file to disk")
 	if err := os.WriteFile(outName, decData, 0600); err != nil {
-		fmt.Printf("❌ Write error: %v\n", err)
+		ux.Error(fmt.Sprintf("Write error: %v", err))
 		secureWipe(decData)
 		return
 	}
 
-	secureWipe(decData) // Wipe after successful write
-	fmt.Printf("✅ Decrypted & verified: %s → %s\n", encPath, outName)
+	secureWipe(decData)
+	ux.Success(fmt.Sprintf("Decrypted & verified: %s → %s", encPath, outName))
 }
 
 func Audit() {
 	manifest, err := loadManifest()
 	if err != nil || len(manifest.Files) == 0 {
-		fmt.Println("📭 No files in vault to audit.")
+		ux.Info("No files in vault to audit.")
 		return
 	}
 
 	pass := readPassphrase()
 	defer secureWipe(pass)
 
-	fmt.Println("🔍 Starting integrity audit...")
+	ux.Info("Starting integrity audit...")
 	allOK := true
 
 	for encName, record := range manifest.Files {
 		encPath := filepath.Join(vaultDir, encName)
+		ux.Verbose("Checking: " + encName)
 		encData, err := os.ReadFile(encPath)
 		if err != nil {
-			fmt.Printf("⚠️  %s: Missing or unreadable\n", encName)
+			ux.Warning(fmt.Sprintf("%s: Missing or unreadable", encName))
 			allOK = false
 			continue
 		}
 
 		decData, err := crypto.Decrypt(encData, pass)
 		if err != nil {
-			fmt.Printf("🔒 %s: Decryption failed (wrong passphrase?)\n", encName)
+			ux.Warning(fmt.Sprintf("%s: Decryption failed", encName))
 			allOK = false
 			continue
 		}
 
 		if calculateHash(decData) == record.SHA256 {
-			fmt.Printf("✅ %s: OK (%s)\n", encName, record.OriginalName)
+			ux.Success(fmt.Sprintf("%s: OK (%s)", encName, record.OriginalName))
 		} else {
-			fmt.Printf("🚨 %s: TAMPERED/CORRUPTED!\n", encName)
+			ux.Error(fmt.Sprintf("%s: TAMPERED/CORRUPTED!", encName))
 			allOK = false
 		}
 		secureWipe(decData)
 	}
 
 	if allOK {
-		fmt.Println("✨ All files verified. Vault integrity intact.")
+		ux.Info("✨ All files verified. Vault integrity intact.")
 	} else {
-		fmt.Println("⚠️  Audit failed. Restore from backup or re-encrypt originals.")
+		ux.Warning("Audit failed. Restore from backup or re-encrypt originals.")
 	}
 }

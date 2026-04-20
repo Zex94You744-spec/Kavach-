@@ -1,0 +1,189 @@
+#!/bin/bash
+# 🛡️ Kavach Menu - Beginner-Friendly Interface
+# Designed for Termux/Mobile users
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
+# Get script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+KAVACH="$SCRIPT_DIR/kavach"
+
+# Check if kavach binary exists
+if [ ! -f "$KAVACH" ]; then
+    echo -e "${RED}❌ Error: kavach binary not found!${NC}"
+    echo -e "Please run: cd $SCRIPT_DIR && go build -o kavach cmd/kavach/main.go"
+    exit 1
+fi
+
+# Clear screen function
+clear_screen() {
+    clear
+    echo -e "${CYAN}╔══════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║     🔒 KAVACH SECURE VAULT v0.3.0      ║${NC}"
+    echo -e "${CYAN}╚══════════════════════════════════════════╝${NC}"
+    echo ""
+}
+
+# Main menu
+show_menu() {
+    echo -e "${GREEN}📋 Main Menu:${NC}"
+    echo -e "  ${YELLOW}1${NC}) 🔐 Initialize new vault"
+    echo -e "  ${YELLOW}2${NC}) 📁 Add file to vault"
+    echo -e "  ${YELLOW}3${NC}) 📥 Extract file from vault"
+    echo -e "  ${YELLOW}4${NC}) 🔍 Audit vault integrity"
+    echo -e "  ${YELLOW}5${NC}) 🔄 Check for updates"
+    echo -e "  ${YELLOW}6${NC}) 📊 View vault status"
+    echo -e "  ${YELLOW}7${NC}) ℹ️  Show help"
+    echo -e "  ${YELLOW}0${NC}) 🚪 Exit"
+    echo ""
+}
+
+# Initialize vault
+init_vault() {
+    echo -e "${BLUE}🔐 Initializing new vault...${NC}"
+    $KAVACH init
+    echo ""
+    read -p "Press Enter to continue..."
+}
+
+# Add file
+add_file() {
+    echo -e "${BLUE}📁 Add file to vault${NC}"
+    echo -e "${YELLOW}Enter file path:${NC} "
+    read -r filepath
+    
+    if [ -z "$filepath" ]; then
+        echo -e "${RED}❌ Error: No file path provided!${NC}"
+        read -p "Press Enter to continue..."
+        return
+    fi
+    
+    if [ ! -f "$filepath" ]; then
+        echo -e "${RED}❌ Error: File not found!${NC}"
+        read -p "Press Enter to continue..."
+        return
+    fi
+    
+    echo -e "${GREEN}Adding: $filepath${NC}"
+    $KAVACH add "$filepath"
+    echo ""
+    read -p "Press Enter to continue..."
+}
+
+# Extract file
+pull_file() {
+    echo -e "${BLUE}📥 Extract file from vault${NC}"
+    
+    # List encrypted files
+    if [ -d ".kavach" ]; then
+        echo -e "${CYAN}📦 Encrypted files:${NC}"
+        ls -1 .kavach/*.enc 2>/dev/null | sed 's|.kavach/||' | nl
+        echo ""
+    else
+        echo -e "${YELLOW}⚠️  No vault found. Initialize first!${NC}"
+        read -p "Press Enter to continue..."
+        return
+    fi
+    
+    echo -e "${YELLOW}Enter encrypted filename:${NC} "
+    read -r encfile
+    
+    if [ -z "$encfile" ]; then
+        echo -e "${RED}❌ Error: No filename provided!${NC}"
+        read -p "Press Enter to continue..."
+        return
+    fi
+    
+    $KAVACH pull "$encfile"
+    echo ""
+    read -p "Press Enter to continue..."
+}
+
+# Audit vault
+audit_vault() {
+    echo -e "${BLUE}🔍 Auditing vault integrity...${NC}"
+    echo ""
+    $KAVACH audit
+    echo ""
+    read -p "Press Enter to continue..."
+}
+
+# Check updates
+check_updates() {
+    echo -e "${BLUE}🔄 Checking for updates...${NC}"
+    echo ""
+    $KAVACH update
+    echo ""
+    read -p "Press Enter to continue..."
+}
+
+# Vault status
+vault_status() {
+    echo -e "${BLUE}📊 Vault Status${NC}"
+    echo ""
+    
+    if [ -d ".kavach" ]; then
+        echo -e "${GREEN}✅ Vault: Initialized${NC}"
+        echo -e "${CYAN}📁 Location: $(pwd)/.kavach${NC}"
+        echo ""
+        
+        # Count files
+        file_count=$(ls -1 .kavach/*.enc 2>/dev/null | wc -l)
+        echo -e "${YELLOW}📦 Encrypted files: $file_count${NC}"
+        
+        if [ $file_count -gt 0 ]; then
+            echo ""
+            echo -e "${CYAN}Files:${NC}"
+            ls -lh .kavach/*.enc 2>/dev/null | awk '{print "  • "$9" ("$5")"}'
+        fi
+    else
+        echo -e "${RED}❌ Vault: Not initialized${NC}"
+        echo -e "Use option 1 to create a new vault"
+    fi
+    
+    echo ""
+    read -p "Press Enter to continue..."
+}
+
+# Show help
+show_help() {
+    echo -e "${BLUE}ℹ️  Kavach CLI Help${NC}"
+    echo ""
+    $KAVACH help
+    echo ""
+    read -p "Press Enter to continue..."
+}
+
+# Main loop
+while true; do
+    clear_screen
+    show_menu
+    echo -e "${YELLOW}┌─────────────────────────────┐${NC}"
+    echo -e "${YELLOW}│${NC} Select option (0-7): "
+    echo -e "${YELLOW}└─────────────────────────────┘${NC}"
+    read -r choice
+    
+    case $choice in
+        1) init_vault ;;
+        2) add_file ;;
+        3) pull_file ;;
+        4) audit_vault ;;
+        5) check_updates ;;
+        6) vault_status ;;
+        7) show_help ;;
+        0)
+            echo -e "${GREEN}👋 Goodbye! Stay secure! 🔐${NC}"
+            exit 0
+            ;;
+        *)
+            echo -e "${RED}❌ Invalid option! Please choose 0-7${NC}"
+            sleep 2
+            ;;
+    esac
+done
