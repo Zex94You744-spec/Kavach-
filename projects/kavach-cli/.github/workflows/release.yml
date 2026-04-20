@@ -1,0 +1,78 @@
+name: 🚀 Auto Release & Deploy
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: 🔐 Setup Signing Key
+        run: |
+          echo "${{ secrets.ED25519_PRIVATE_KEY }}" | base64 -d > private.pem
+
+      - name: 🔨 Build, Sign & Package
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          mkdir -p dist
+          PLATFORMS=("linux/amd64" "linux/arm64" "darwin/amd64" "darwin/arm64" "windows/amd64")
+          
+          for p in "${PLATFORMS[@]}"; do
+            OS=${p%%/*}; ARCH=${p##*/}; EXT=""; [ "$OS" = "windows" ] && EXT=".exe"
+            BIN="kavach-${OS}-${ARCH}${EXT}"
+            
+            echo "🔨 Building $BIN..."
+            CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -trimpath -ldflags="-s -w -X main.version=$VERSION" -o dist/$BIN cmd/kavach/main.go
+            
+            echo "🔏 Signing $BIN..."
+            go run sign-tool/sign.go private.pem dist/$BIN dist/$BIN.sig
+            
+            echo "📦 Packaging $BIN..."
+            if [ "$OS" = "windows" ]; then
+              zip -j dist/${BIN%.exe}.zip dist/$BIN dist/$BIN.sig
+            else
+              tar -czf dist/$BIN.tar.gz -C dist $BIN $BIN.sig
+            fi
+          done
+
+      - name: 📝 Generate Checksums & latest.json
+        run: |
+          cd dist
+          sha256sum kavach-* > SHA256SUMS
+          VERSION=${GITHUB_REF#refs/tags/}
+          
+          cat > latest.json << EOF
+          {
+            "version": "${VERSION}",
+            "binary_url": "https://raw.githubusercontent.com/zex94you744-spec/kavach-updates/main/kavach-linux-arm64",
+            "signature_url": "https://raw.githubusercontent.com/zex94you744-spec/kavach-updates/main/kavach-linux-arm64.sig",
+            "sha256": "$(sha256sum kavach-linux-arm64 | awk '{print $1}')"
+          }
+          EOF
+          cd ..
+
+      - name: 📤 Push to Update Repo
+        run: |
+          git clone https://x-access-token:${{ secrets.GH_PAT }}@github.com/zex94you744-spec/kavach-updates.git update-repo
+          cp dist/* update-repo/
+          cd update-repo
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add .
+          git commit -m "release: ${{ github.ref_name }}" || true
+          git push origin main
+
+      - name: 🎉 Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
